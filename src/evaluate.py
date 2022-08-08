@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 import logging
 import sys
+import os
 import typing
 
 import numpy as np
@@ -29,15 +30,11 @@ logger = logging.getLogger(__name__)
 @dataclass
 class CommonArguments:
     # dataset
-    train_path: typing.Optional[str] = field(
-        default=None,
-        metadata={"help": "A csv path containing the training data."},
-    )
-    valid_path: typing.Optional[str] = field(
+    test_path: typing.Optional[str] = field(
         default=None,
         metadata={"help": "A csv path containing the validation data."},
     )
-    model_name_or_path: typing.Optional[str] = field(
+    save_items_dir: typing.Optional[str] = field(
         default=None,
         metadata={"help": "A csv path containing the validation data."},
     )
@@ -102,53 +99,34 @@ def main():
 
     # load transformers tokenizer
     tokenizer = AutoTokenizer.from_pretrained(
-        common_args.model_name_or_path,
-        cache_dir=common_args.cache_dir,
-        use_fast=common_args.use_fast_tokenizer,
-        revision=common_args.model_revision,
-        use_auth_token=(True if common_args.use_auth_token else None),
+        common_args.save_items_dir,
+        local_files_only=True
     )
 
     # load datasets
-    train_dataset = load_csv_dataset(
-        common_args.train_path,
-        tokenizer,
-        common_args.max_length,
-        common_args.pad_to_max_length,
-    ).shuffle(seed=training_args.seed)
-    valid_dataset = load_csv_dataset(
-        common_args.valid_path,
+    test_dataset = load_csv_dataset(
+        common_args.test_path,
         tokenizer,
         common_args.max_length,
         common_args.pad_to_max_length,
     )
-    n_label = len(dict.fromkeys(train_dataset["label"]))
 
     # load transformer model
     model = BertForSequenceClassification.from_pretrained(
-        common_args.model_name_or_path,
-        num_labels=n_label,
+        os.path.join(common_args.save_items_dir, "pytorch_model.bin"),
+        config=os.path.join(common_args.save_items_dir, "config.json"),
+        local_files_only=True
     )
-    # froze the parameters of pretrained model
-    for param in model.base_model.parameters():
-        param.requires_grad = False
     model.to(device)
+    model.eval()
 
     trainer = Trainer(
         model=model,
         args=training_args,
-        train_dataset=train_dataset,
-        eval_dataset=valid_dataset,
+        eval_dataset=test_dataset,
         tokenizer=tokenizer,
+        compute_metrics=compute_metrics,
     )
-
-    # start trainining
-    result = trainer.train()
-    metrics = result.metrics
-    trainer.save_model()  # saves the tokenizer too for easy upload
-    trainer.log_metrics("train", metrics)
-    trainer.save_metrics("train", metrics)
-    trainer.save_state()
 
     # start evaluation
     metrics = trainer.evaluate()
